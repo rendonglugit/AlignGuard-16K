@@ -219,9 +219,9 @@ export class ElfParser {
     }
 
     const effectiveMinAlign = minLoadAlignment === Infinity ? 0 : minLoadAlignment;
-    // 兼容 16KB 要求：所有 PT_LOAD 的 align >= 16384，且 PT_GNU_RELRO 必须满足要求
-    const isLoadOk = loadSegments.every((seg) => seg.align >= 16384);
-    const is16KbCompatible = isLoadOk && isRelroOk;
+    // Google 官方审查硬性标准：所有 PT_LOAD 必须满足 16KB (p_align >= 16384)
+    // PT_GNU_RELRO 属于 Android 15 兼容兜底范畴，作为高级建议项，不直接阻断主合规判定
+    const is16KbCompatible = loadSegments.every((seg) => seg.align >= 16384);
 
     return {
       isValidElf: true,

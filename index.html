@@ -374,31 +374,33 @@ vivo</textarea>
             const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 16384, fileSize)).arrayBuffer();
             elfResult = parseElf(headerBuf);
 
-            if (!elfResult.is16KbCompatible && !isZip16K) {
+            const isLoadOk = (elfResult.minAlign >= 16384);
+            const hasRelroWarning = !elfResult.relroOk;
+
+            if (!isLoadOk && !isZip16K) {
               status = 'FAIL_BOTH';
-              statusReason = elfResult.relroDetail ? `${elfResult.relroDetail}，且 Zip 偏移未按 16KB 对齐` : `ELF段对齐仅 ${elfResult.minAlign} 字节，且 Zip 偏移未按 16KB 对齐`;
+              statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节，且 Zip 偏移未按 16KB 对齐`;
               unaligned64Count++;
-            } else if (!elfResult.is16KbCompatible) {
-              if (!elfResult.relroOk) {
-                status = 'FAIL_RELRO';
-                statusReason = `${elfResult.relroDetail} (Google 官方高危阻断项)`;
-              } else {
-                status = 'FAIL_ELF';
-                statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节 (需 16384+)，C/C++编译链接未开启 16KB`;
-              }
+            } else if (!isLoadOk) {
+              status = 'FAIL_ELF';
+              statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节 (需 16384+)，C/C++编译链接未开启 16KB`;
               unaligned64Count++;
             } else if (!isZip16K) {
               status = 'FAIL_ZIP';
               statusReason = `ELF已满足16KB，但 Zip 偏移 (offset=${dataOffset}) 未对齐 16KB (加固/重签名未做 zipalign -P 16)`;
               unaligned64Count++;
+            } else if (hasRelroWarning) {
+              status = 'WARN_RELRO';
+              statusReason = `PT_LOAD 已满足 16KB (Google 官方审查可通过)。但检测到 ${elfResult.relroDetail} (Android 15+ 将走系统兼容兜底，建议未来升级对应 SDK)`;
+              aligned64Count++;
             } else {
               status = 'PASS';
               aligned64Count++;
             }
           } else {
             status = 'COMPRESSED';
-            statusReason = '64 位 SO 库被压缩存储（非 Stored），建议 extractNativeLibs=false';
-            unaligned64Count++;
+            statusReason = '该 64 位 SO 库为压缩存储，安装时解压到文件系统天然满足 16KB 页面；若需减少体积与内存建议配置 extractNativeLibs=false';
+            aligned64Count++;
           }
         } else {
           // 32 位架构库 (armeabi-v7a / x86): 原生采用 4KB 寻址，Google 16KB 规范完全豁免，无需也不支持 16KB
@@ -479,7 +481,8 @@ vivo</textarea>
         }
       }
 
-      const is16KbCompatible = (minAlign >= 16384) && relroOk;
+      // 遵循 Google Play 官方标准：只要 PT_LOAD 段满足 16KB，核心 ELF 判定即为合格通过
+      const is16KbCompatible = (minAlign >= 16384);
       return { is16KbCompatible, minAlign, relroOk, relroDetail };
     }
 
@@ -590,11 +593,11 @@ vivo</textarea>
 
         let badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">PASS</span>';
         if (so.status === 'FAIL_ELF') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800">ELF 未对齐</span>';
-        if (so.status === 'FAIL_RELRO') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-200 text-rose-900 border border-rose-300">RELRO 未对齐</span>';
+        if (so.status === 'WARN_RELRO') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">RELRO 建议优化</span>';
         if (so.status === 'FAIL_ZIP') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">ZIP 偏移未对齐</span>';
         if (so.status === 'FAIL_BOTH') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-200 text-rose-900">双重未对齐</span>';
         if (so.status === '32BIT_WARN') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700">32位豁免 (4KB标准)</span>';
-        if (so.status === 'COMPRESSED') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 text-sky-800">压缩存储</span>';
+        if (so.status === 'COMPRESSED') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 text-sky-800">压缩存储 (解压运行)</span>';
 
         const is32Bit = (so.abi === 'armeabi-v7a' || so.abi === 'x86');
         const elfAlignText = so.elfResult ? `${so.elfResult.minAlign} B` : '-';
