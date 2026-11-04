@@ -9,6 +9,7 @@ export type SoAlignmentStatus =
   | 'FAIL_ELF'
   | 'FAIL_ZIP'
   | 'FAIL_BOTH'
+  | 'FAIL_RELRO'
   | 'WARN_RELRO'
   | 'COMPRESSED'
   | '32BIT_WARN';
@@ -113,11 +114,12 @@ export class ApkInspector {
               statusReason = `ELF满足16KB，但 Zip 数据偏移 (offset=${entry.dataOffset}) 未对齐 16KB (加固/签名时缺少 zipalign -P 16)`;
               unaligned64BitCount++;
             } else if (hasRelroWarning) {
-              // PT_LOAD 与 ZIP 偏移均满足 16KB，可通过 Google Play 审查！
-              // 但 RELRO 存在未对齐，在 Android 15 上会触发系统 Bionic 兼容兜底，作为建议优化项
-              status = 'WARN_RELRO';
-              statusReason = `PT_LOAD 已满足 16KB (Google 官方审查可通过)。但检测到 ${elfResult.relroInfo!.details} (Android 15+ 将走系统兼容兜底，建议未来升级对应 SDK)`;
-              aligned64BitCount++;
+              // PT_LOAD 与 ZIP 偏移虽然满足 16KB，但 PT_GNU_RELRO 未 16KB 对齐且不是段末尾后缀
+              // Google 官方 Android Studio APK Analyzer 判定：Does not support 16 KB devices
+              // 原理：在 16KB 设备上 linker 执行 mprotect 改变 RELRO 页面保护属性时，会误伤后续可写 .data 段导致运行时 SIGSEGV 崩溃
+              status = 'FAIL_RELRO';
+              statusReason = `Android Studio 判定不兼容: ${elfResult.relroInfo!.details} (在 16KB 设备上运行会因 mprotect 覆盖可写 .data 段导致 SIGSEGV 崩溃)`;
+              unaligned64BitCount++;
             } else {
               status = 'PASS';
               aligned64BitCount++;

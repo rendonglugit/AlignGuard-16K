@@ -390,9 +390,9 @@ vivo</textarea>
               statusReason = `ELF已满足16KB，但 Zip 偏移 (offset=${dataOffset}) 未对齐 16KB (加固/重签名未做 zipalign -P 16)`;
               unaligned64Count++;
             } else if (hasRelroWarning) {
-              status = 'WARN_RELRO';
-              statusReason = `PT_LOAD 已满足 16KB (Google 官方审查可通过)。但检测到 ${elfResult.relroDetail} (Android 15+ 将走系统兼容兜底，建议未来升级对应 SDK)`;
-              aligned64Count++;
+              status = 'FAIL_RELRO';
+              statusReason = `Android Studio 判定不兼容: ${elfResult.relroDetail} (在 16KB 设备上运行会因 mprotect 覆盖可写 .data 段导致 SIGSEGV 崩溃，官方 APK Analyzer 判定 Does not support 16 KB devices)`;
+              unaligned64Count++;
             } else {
               status = 'PASS';
               aligned64Count++;
@@ -593,6 +593,7 @@ vivo</textarea>
 
         let badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">PASS</span>';
         if (so.status === 'FAIL_ELF') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800">ELF 未对齐</span>';
+        if (so.status === 'FAIL_RELRO') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800 border border-rose-300">RELRO 未对齐 (不兼容 16KB)</span>';
         if (so.status === 'WARN_RELRO') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">RELRO 建议优化</span>';
         if (so.status === 'FAIL_ZIP') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">ZIP 偏移未对齐</span>';
         if (so.status === 'FAIL_BOTH') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-200 text-rose-900">双重未对齐</span>';
