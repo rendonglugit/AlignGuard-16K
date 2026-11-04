@@ -81,44 +81,52 @@ export class ApkInspector {
 
       const is64BitAbi = abi === 'arm64-v8a' || abi === 'x86_64';
 
-      // 仅支持针对未压缩 (Stored, method 0) 的 entry 极速读取头。如果压缩了则提示
-      if (entry.compressionMethod === 0) {
-        try {
-          const headerBytes = await zipReader.readEntryHeaderBytes(entry, 8192);
-          elfResult = ElfParser.parse(headerBytes);
+      if (is64BitAbi) {
+        // 64 位架构 (arm64-v8a / x86_64)：必须严格满足 16KB 对齐要求
+        if (entry.compressionMethod === 0) {
+          try {
+            const headerBytes = await zipReader.readEntryHeaderBytes(entry, 8192);
+            elfResult = ElfParser.parse(headerBytes);
 
-          const elfOk = elfResult.is16KbCompatible;
-          const zipOk = !!entry.is16KbAligned;
+            const elfOk = elfResult.is16KbCompatible;
+            const zipOk = !!entry.is16KbAligned;
 
-          if (!elfOk && !zipOk) {
-            status = 'FAIL_BOTH';
-            statusReason = `ELF段对齐仅为 ${elfResult.minLoadAlignment} 字节，且 Zip 文件数据偏移未按 16KB 对齐`;
-            if (is64BitAbi) unaligned64BitCount++;
-          } else if (!elfOk) {
+            if (!elfOk && !zipOk) {
+              status = 'FAIL_BOTH';
+              statusReason = `ELF段对齐仅为 ${elfResult.minLoadAlignment} 字节，且 Zip 文件数据偏移未按 16KB 对齐`;
+              unaligned64BitCount++;
+            } else if (!elfOk) {
+              status = 'FAIL_ELF';
+              statusReason = `ELF段对齐仅为 ${elfResult.minLoadAlignment} 字节 (需 16384+)，C/C++编译时未开启 16KB`;
+              unaligned64BitCount++;
+            } else if (!zipOk) {
+              status = 'FAIL_ZIP';
+              statusReason = `ELF满足16KB，但 Zip 数据偏移 (offset=${entry.dataOffset}) 未对齐 16KB (加固/签名时缺少 zipalign -P 16)`;
+              unaligned64BitCount++;
+            } else {
+              status = 'PASS';
+              aligned64BitCount++;
+            }
+          } catch (e: any) {
             status = 'FAIL_ELF';
-            statusReason = `ELF段对齐仅为 ${elfResult.minLoadAlignment} 字节 (需 16384+)，C/C++编译时未开启 16KB`;
-            if (is64BitAbi) unaligned64BitCount++;
-          } else if (!zipOk) {
-            status = 'FAIL_ZIP';
-            statusReason = `ELF满足16KB，但 Zip 数据偏移 (offset=${entry.dataOffset}) 未对齐 16KB (加固/签名时缺少 zipalign -P 16)`;
-            if (is64BitAbi) unaligned64BitCount++;
-          } else {
-            status = 'PASS';
-            if (is64BitAbi) aligned64BitCount++;
+            statusReason = `解析 ELF 头出错: ${e.message}`;
+            unaligned64BitCount++;
           }
-        } catch (e: any) {
-          status = 'FAIL_ELF';
-          statusReason = `解析 ELF 头出错: ${e.message}`;
-          if (is64BitAbi) unaligned64BitCount++;
+        } else {
+          status = 'COMPRESSED';
+          statusReason = '该 64 位 SO 库被压缩存储（非 Stored），运行时需解压，建议使用 extractNativeLibs=false';
+          unaligned64BitCount++;
         }
       } else {
-        status = 'COMPRESSED';
-        statusReason = '该 SO 库被压缩存储（非 Stored），运行时需解压，建议使用 extractNativeLibs=false';
-      }
-
-      if (!is64BitAbi && status === 'PASS') {
+        // 32 位架构 (armeabi-v7a / x86)：原生采用 4KB 架构，Google 16KB 政策完全豁免，无需也不支持 16KB
+        if (entry.compressionMethod === 0) {
+          try {
+            const headerBytes = await zipReader.readEntryHeaderBytes(entry, 8192);
+            elfResult = ElfParser.parse(headerBytes);
+          } catch {}
+        }
         status = '32BIT_WARN';
-        statusReason = '32 位架构库（Android 16KB 内核不强制要求，建议评估是否需保留）';
+        statusReason = '32 位架构库（原生 4KB 标准，Google 16KB 政策完全豁免，合规通过）';
       }
 
       const item: SoCheckResult = {

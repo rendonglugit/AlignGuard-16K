@@ -369,33 +369,42 @@ vivo</textarea>
         let status = 'PASS';
         let statusReason = 'ELF与Zip偏移均满足 16KB 对齐要求';
 
-        if (entry.compressionMethod === 0) {
-          const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 8192, fileSize)).arrayBuffer();
-          elfResult = parseElf(headerBuf);
+        if (is64Bit) {
+          if (entry.compressionMethod === 0) {
+            const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 8192, fileSize)).arrayBuffer();
+            elfResult = parseElf(headerBuf);
 
-          if (!elfResult.is16KbCompatible && !isZip16K) {
-            status = 'FAIL_BOTH';
-            statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节，且 Zip 偏移未按 16KB 对齐`;
-            if (is64Bit) unaligned64Count++;
-          } else if (!elfResult.is16KbCompatible) {
-            status = 'FAIL_ELF';
-            statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节 (需 16384+)，C/C++编译链接未开启 16KB`;
-            if (is64Bit) unaligned64Count++;
-          } else if (!isZip16K) {
-            status = 'FAIL_ZIP';
-            statusReason = `ELF已满足16KB，但 Zip 偏移 (offset=${dataOffset}) 未对齐 16KB (加固/重签名未做 zipalign -P 16)`;
-            if (is64Bit) unaligned64Count++;
+            if (!elfResult.is16KbCompatible && !isZip16K) {
+              status = 'FAIL_BOTH';
+              statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节，且 Zip 偏移未按 16KB 对齐`;
+              unaligned64Count++;
+            } else if (!elfResult.is16KbCompatible) {
+              status = 'FAIL_ELF';
+              statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节 (需 16384+)，C/C++编译链接未开启 16KB`;
+              unaligned64Count++;
+            } else if (!isZip16K) {
+              status = 'FAIL_ZIP';
+              statusReason = `ELF已满足16KB，但 Zip 偏移 (offset=${dataOffset}) 未对齐 16KB (加固/重签名未做 zipalign -P 16)`;
+              unaligned64Count++;
+            } else {
+              status = 'PASS';
+              aligned64Count++;
+            }
           } else {
-            if (is64Bit) aligned64Count++;
+            status = 'COMPRESSED';
+            statusReason = '64 位 SO 库被压缩存储（非 Stored），建议 extractNativeLibs=false';
+            unaligned64Count++;
           }
         } else {
-          status = 'COMPRESSED';
-          statusReason = 'SO 库被压缩存储（非 Stored），建议 extractNativeLibs=false';
-        }
-
-        if (!is64Bit && status === 'PASS') {
+          // 32 位架构库 (armeabi-v7a / x86): 原生采用 4KB 寻址，Google 16KB 规范完全豁免，无需也不支持 16KB
+          if (entry.compressionMethod === 0) {
+            try {
+              const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 8192, fileSize)).arrayBuffer();
+              elfResult = parseElf(headerBuf);
+            } catch {}
+          }
           status = '32BIT_WARN';
-          statusReason = '32 位架构库（Android 16KB 内核不强制要求）';
+          statusReason = '32 位架构库（原生 4KB 标准，Google 16KB 政策完全豁免，合规通过）';
         }
 
         soResults.push({ abi, name, dataOffset, isZip16K, elfResult, status, statusReason });
@@ -554,17 +563,20 @@ vivo</textarea>
         if (so.status === 'FAIL_ELF') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800">ELF 未对齐</span>';
         if (so.status === 'FAIL_ZIP') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">ZIP 偏移未对齐</span>';
         if (so.status === 'FAIL_BOTH') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-200 text-rose-900">双重未对齐</span>';
-        if (so.status === '32BIT_WARN') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">32位(不强制)</span>';
+        if (so.status === '32BIT_WARN') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700">32位豁免 (4KB标准)</span>';
         if (so.status === 'COMPRESSED') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 text-sky-800">压缩存储</span>';
 
+        const is32Bit = (so.abi === 'armeabi-v7a' || so.abi === 'x86');
         const elfAlignText = so.elfResult ? `${so.elfResult.minAlign} B` : '-';
-        const zipAlignText = `${so.dataOffset} ${so.isZip16K ? '(16KB已对齐)' : '(未对齐)'}`;
+        const zipAlignText = `${so.dataOffset} ${so.isZip16K ? '(16KB已对齐)' : is32Bit ? '(32位4KB)' : '(未对齐)'}`;
+        const elfColorClass = so.elfResult?.is16KbCompatible ? 'text-emerald-600' : is32Bit ? 'text-slate-600 font-normal' : 'text-rose-600';
+        const zipColorClass = so.isZip16K ? 'text-emerald-600' : is32Bit ? 'text-slate-600' : 'text-rose-600';
 
         tr.innerHTML = `
           <td class="px-6 py-3.5"><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[11px]">${so.abi}</span></td>
           <td class="px-6 py-3.5 font-mono text-slate-800">${so.name}</td>
-          <td class="px-6 py-3.5 font-mono font-semibold ${so.elfResult?.is16KbCompatible ? 'text-emerald-600' : 'text-rose-600'}">${elfAlignText}</td>
-          <td class="px-6 py-3.5 font-mono ${so.isZip16K ? 'text-emerald-600' : 'text-rose-600'}">${zipAlignText}</td>
+          <td class="px-6 py-3.5 font-mono font-semibold ${elfColorClass}">${elfAlignText}</td>
+          <td class="px-6 py-3.5 font-mono ${zipColorClass}">${zipAlignText}</td>
           <td class="px-6 py-3.5">${badge}</td>
           <td class="px-6 py-3.5 text-slate-500 max-w-xs">${so.statusReason}</td>
         `;
