@@ -34,8 +34,9 @@ However, real-world release pipelines frequently run into critical pitfalls:
 
 ## ✨ Key Features
 
-### 1. 🔍 Dual-Layer 16KB Alignment Verification
+### 1. 🔍 3-Dimensional 16KB Alignment Verification (Fully Aligned with Google Play)
 - **ELF Segment Alignment (`p_align >= 16384`)**: Parses ELF Program Headers (`PT_LOAD`) in milliseconds to pinpoint exactly which 3rd-party SDK or native C/C++ library was compiled without 16KB support.
+- **PT_GNU_RELRO Boundary & Suffix Audit**: Deeply inspects `PT_GNU_RELRO` segments to prevent *"RELRO is not a suffix and its end is not 16 KB aligned"* issues that cause `SIGSEGV` runtime crashes on Android 15+.
 - **ZIP File Data Offset (`Offset % 16384 === 0`)**: Inspects uncompressed (Stored) `.so` file data absolute offsets in the ZIP archive to detect broken alignment introduced by post-processing tools.
 
 ### 2. ⚡ Lightning-Fast Chunked Streaming (Even for 1GB+ Packages)

@@ -429,6 +429,11 @@ export default function App() {
                               ELF 未对齐
                             </span>
                           )}
+                          {so.status === 'FAIL_RELRO' && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-200 text-rose-900 border border-rose-300">
+                              RELRO 未对齐
+                            </span>
+                          )}
                           {so.status === 'FAIL_ZIP' && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">
                               ZIP 偏移未对齐

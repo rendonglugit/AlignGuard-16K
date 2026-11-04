@@ -4,7 +4,14 @@ import { ElfParser, ElfAnalysisResult } from './elf/ElfParser';
 import { SigningBlockParser, ApkSignatureInfo } from './signature/SigningBlockParser';
 import { HardeningDetector, HardeningFeature } from './hardening/HardeningDetector';
 
-export type SoAlignmentStatus = 'PASS' | 'FAIL_ELF' | 'FAIL_ZIP' | 'FAIL_BOTH' | 'COMPRESSED' | '32BIT_WARN';
+export type SoAlignmentStatus =
+  | 'PASS'
+  | 'FAIL_ELF'
+  | 'FAIL_ZIP'
+  | 'FAIL_BOTH'
+  | 'FAIL_RELRO'
+  | 'COMPRESSED'
+  | '32BIT_WARN';
 
 export interface SoCheckResult {
   entry: ZipEntry;
@@ -82,10 +89,11 @@ export class ApkInspector {
       const is64BitAbi = abi === 'arm64-v8a' || abi === 'x86_64';
 
       if (is64BitAbi) {
-        // 64 位架构 (arm64-v8a / x86_64)：必须严格满足 16KB 对齐要求
+        // 64 位架构 (arm64-v8a / x86_64)：必须严格满足 16KB 对齐要求 (包含 PT_LOAD 与 PT_GNU_RELRO)
         if (entry.compressionMethod === 0) {
           try {
-            const headerBytes = await zipReader.readEntryHeaderBytes(entry, 8192);
+            // 读取前 16KB 确保完全覆盖所有 Program Headers
+            const headerBytes = await zipReader.readEntryHeaderBytes(entry, 16384);
             elfResult = ElfParser.parse(headerBytes);
 
             const elfOk = elfResult.is16KbCompatible;
@@ -93,11 +101,20 @@ export class ApkInspector {
 
             if (!elfOk && !zipOk) {
               status = 'FAIL_BOTH';
-              statusReason = `ELF段对齐仅为 ${elfResult.minLoadAlignment} 字节，且 Zip 文件数据偏移未按 16KB 对齐`;
+              if (elfResult.relroInfo && !elfResult.relroInfo.is16KbCompatible) {
+                statusReason = `${elfResult.relroInfo.details}，且 Zip 偏移未按 16KB 对齐`;
+              } else {
+                statusReason = `ELF段对齐仅为 ${elfResult.minLoadAlignment} 字节，且 Zip 文件数据偏移未按 16KB 对齐`;
+              }
               unaligned64BitCount++;
             } else if (!elfOk) {
-              status = 'FAIL_ELF';
-              statusReason = `ELF段对齐仅为 ${elfResult.minLoadAlignment} 字节 (需 16384+)，C/C++编译时未开启 16KB`;
+              if (elfResult.relroInfo && !elfResult.relroInfo.is16KbCompatible) {
+                status = 'FAIL_RELRO';
+                statusReason = `${elfResult.relroInfo.details} (Google 官方高危审查项)`;
+              } else {
+                status = 'FAIL_ELF';
+                statusReason = `ELF段对齐仅为 ${elfResult.minLoadAlignment} 字节 (需 16384+)，C/C++编译时未开启 16KB`;
+              }
               unaligned64BitCount++;
             } else if (!zipOk) {
               status = 'FAIL_ZIP';
@@ -121,7 +138,7 @@ export class ApkInspector {
         // 32 位架构 (armeabi-v7a / x86)：原生采用 4KB 架构，Google 16KB 政策完全豁免，无需也不支持 16KB
         if (entry.compressionMethod === 0) {
           try {
-            const headerBytes = await zipReader.readEntryHeaderBytes(entry, 8192);
+            const headerBytes = await zipReader.readEntryHeaderBytes(entry, 16384);
             elfResult = ElfParser.parse(headerBytes);
           } catch {}
         }

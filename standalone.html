@@ -371,16 +371,21 @@ vivo</textarea>
 
         if (is64Bit) {
           if (entry.compressionMethod === 0) {
-            const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 8192, fileSize)).arrayBuffer();
+            const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 16384, fileSize)).arrayBuffer();
             elfResult = parseElf(headerBuf);
 
             if (!elfResult.is16KbCompatible && !isZip16K) {
               status = 'FAIL_BOTH';
-              statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节，且 Zip 偏移未按 16KB 对齐`;
+              statusReason = elfResult.relroDetail ? `${elfResult.relroDetail}，且 Zip 偏移未按 16KB 对齐` : `ELF段对齐仅 ${elfResult.minAlign} 字节，且 Zip 偏移未按 16KB 对齐`;
               unaligned64Count++;
             } else if (!elfResult.is16KbCompatible) {
-              status = 'FAIL_ELF';
-              statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节 (需 16384+)，C/C++编译链接未开启 16KB`;
+              if (!elfResult.relroOk) {
+                status = 'FAIL_RELRO';
+                statusReason = `${elfResult.relroDetail} (Google 官方高危阻断项)`;
+              } else {
+                status = 'FAIL_ELF';
+                statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节 (需 16384+)，C/C++编译链接未开启 16KB`;
+              }
               unaligned64Count++;
             } else if (!isZip16K) {
               status = 'FAIL_ZIP';
@@ -399,7 +404,7 @@ vivo</textarea>
           // 32 位架构库 (armeabi-v7a / x86): 原生采用 4KB 寻址，Google 16KB 规范完全豁免，无需也不支持 16KB
           if (entry.compressionMethod === 0) {
             try {
-              const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 8192, fileSize)).arrayBuffer();
+              const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 16384, fileSize)).arrayBuffer();
               elfResult = parseElf(headerBuf);
             } catch {}
           }
@@ -425,9 +430,9 @@ vivo</textarea>
     }
 
     function parseElf(buf) {
-      if (buf.byteLength < 52) return { is16KbCompatible: false, minAlign: 0 };
+      if (buf.byteLength < 52) return { is16KbCompatible: false, minAlign: 0, relroOk: true };
       const view = new DataView(buf);
-      if (view.getUint32(0, false) !== 0x7f454c46) return { is16KbCompatible: false, minAlign: 0 };
+      if (view.getUint32(0, false) !== 0x7f454c46) return { is16KbCompatible: false, minAlign: 0, relroOk: true };
 
       const is64Bit = view.getUint8(4) === 2;
       const isLittleEndian = view.getUint8(5) === 1;
@@ -438,6 +443,8 @@ vivo</textarea>
 
       let minAlign = Infinity;
       let hasLoad = false;
+      const loadSegments = [];
+      let relro = null;
 
       for (let i = 0; i < phNum; i++) {
         const entryOffset = phOffset + i * phEntrySize;
@@ -445,13 +452,35 @@ vivo</textarea>
         const p_type = view.getUint32(entryOffset, isLittleEndian);
         if (p_type === 1) { // PT_LOAD
           hasLoad = true;
+          const vaddr = is64Bit ? Number(view.getBigUint64(entryOffset + 16, isLittleEndian)) : view.getUint32(entryOffset + 8, isLittleEndian);
+          const memsz = is64Bit ? Number(view.getBigUint64(entryOffset + 40, isLittleEndian)) : view.getUint32(entryOffset + 20, isLittleEndian);
           const align = is64Bit ? Number(view.getBigUint64(entryOffset + 48, isLittleEndian)) : view.getUint32(entryOffset + 28, isLittleEndian);
           if (align > 0) minAlign = Math.min(minAlign, align);
+          loadSegments.push({ vaddr, memsz, align });
+        } else if (p_type === 0x6474e552) { // PT_GNU_RELRO
+          const vaddr = is64Bit ? Number(view.getBigUint64(entryOffset + 16, isLittleEndian)) : view.getUint32(entryOffset + 8, isLittleEndian);
+          const memsz = is64Bit ? Number(view.getBigUint64(entryOffset + 40, isLittleEndian)) : view.getUint32(entryOffset + 20, isLittleEndian);
+          const align = is64Bit ? Number(view.getBigUint64(entryOffset + 48, isLittleEndian)) : view.getUint32(entryOffset + 28, isLittleEndian);
+          relro = { vaddr, memsz, align, end: vaddr + memsz };
         }
       }
 
-      if (!hasLoad || minAlign === Infinity) return { is16KbCompatible: false, minAlign: 0 };
-      return { is16KbCompatible: minAlign >= 16384, minAlign };
+      if (!hasLoad || minAlign === Infinity) return { is16KbCompatible: false, minAlign: 0, relroOk: true };
+
+      let relroOk = true;
+      let relroDetail = '';
+      if (relro && is64Bit) {
+        const isEnd16K = relro.end % 16384 === 0;
+        const containingLoad = loadSegments.find(l => l.vaddr <= relro.vaddr && (l.vaddr + l.memsz) >= relro.end);
+        const isSuffix = containingLoad ? (containingLoad.vaddr + containingLoad.memsz === relro.end) : false;
+        if (!isEnd16K && !isSuffix) {
+          relroOk = false;
+          relroDetail = `PT_GNU_RELRO start: 0x${relro.vaddr.toString(16).padStart(8, '0')} end: 0x${relro.end.toString(16).padStart(8, '0')} (RELRO is not a suffix and its end is not 16 KB aligned)`;
+        }
+      }
+
+      const is16KbCompatible = (minAlign >= 16384) && relroOk;
+      return { is16KbCompatible, minAlign, relroOk, relroDetail };
     }
 
     async function parseSigningBlock(file, cdOffset) {
@@ -561,6 +590,7 @@ vivo</textarea>
 
         let badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">PASS</span>';
         if (so.status === 'FAIL_ELF') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800">ELF 未对齐</span>';
+        if (so.status === 'FAIL_RELRO') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-200 text-rose-900 border border-rose-300">RELRO 未对齐</span>';
         if (so.status === 'FAIL_ZIP') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">ZIP 偏移未对齐</span>';
         if (so.status === 'FAIL_BOTH') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-200 text-rose-900">双重未对齐</span>';
         if (so.status === '32BIT_WARN') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700">32位豁免 (4KB标准)</span>';

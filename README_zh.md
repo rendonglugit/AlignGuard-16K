@@ -32,8 +32,9 @@ Android 15 全面引入了 **16 KB 内存页面大小（16 KB Page Size）**。�
 
 ## ✨ 核心特性矩阵
 
-### 1. 🔍 双重 16KB 深度穿透检测
+### 1. 🔍 三维 16KB 深度穿透检测（完全对齐 Google 官方审查）
 - **ELF 内部段对齐（p_align >= 16384）**：秒级遍历 ELF Program Header 的 `PT_LOAD` 段，精准查出是哪个底层三方 SDK 或自研 C/C++ 库未按 16KB 编译链接。
+- **PT_GNU_RELRO 边界与 Suffix 严格审查**：深度检测只读重定位段 `PT_GNU_RELRO` 的 end 是否 16KB 对齐且非段末尾，严查 Google APK Analyzer 报出的 *“RELRO is not a suffix and its end is not 16 KB aligned”* 隐形闪退元凶！
 - **ZIP 归档绝对偏移（Offset % 16384 === 0）**：专治加固与重签名导致的文件数据偏移错位。
 
 ### 2. ⚡ 毫秒级分块流式读取（即使是 1GB 超大包！）
