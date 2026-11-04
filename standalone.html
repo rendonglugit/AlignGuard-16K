@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Android 16KB Page Size & 美团多渠道工具箱</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen pb-16">
+  <!-- 顶部 Header -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold shadow-md shadow-blue-200">
+          16K
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-slate-900 leading-tight">Android 16KB & 美团渠道工具箱</h1>
+          <p class="text-xs text-slate-500">16 KB 对齐检测 · 加固排查 · 美团 Walle 纯前端秒级切包</p>
+        </div>
+      </div>
+      <div class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        100% 浏览器本地流式读取 · 零文件上传 · 源码绝不外泄
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 mt-6">
+    <!-- 顶部 Tab 切换 -->
+    <div class="flex border-b border-slate-200 mb-6 bg-white p-1 rounded-xl shadow-sm">
+      <button id="tab-inspect-btn" onclick="switchTab('inspect')" class="flex-1 py-2.5 text-sm font-semibold rounded-lg bg-blue-600 text-white shadow-sm transition-all">
+        🔍 16KB 对齐与加固排查
+      </button>
+      <button id="tab-walle-btn" onclick="switchTab('walle')" class="flex-1 py-2.5 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+        ⚡ 美团 Walle 多渠道工坊
+      </button>
+    </div>
+
+    <!-- 拖拽上传区 -->
+    <div id="drop-zone" class="border-2 border-dashed border-slate-300 hover:border-blue-400 bg-white rounded-2xl p-8 text-center cursor-pointer transition-all shadow-sm">
+      <input type="file" id="file-input" accept=".apk,.aab" class="hidden" />
+      <div class="max-w-md mx-auto flex flex-col items-center pointer-events-none">
+        <div class="w-14 h-14 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-3">
+          <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+        </div>
+        <p id="file-hint" class="text-base font-semibold text-slate-800">点击或将 APK / AAB 拖拽至此处</p>
+        <p class="text-xs text-slate-500 mt-1">支持超大包体（>1GB），采用分块流式读取技术，1~2 秒内极速出报告</p>
+      </div>
+    </div>
+
+    <!-- 加载中 -->
+    <div id="loading-spinner" class="hidden my-8 text-center py-6 bg-white rounded-xl shadow-sm border border-slate-100">
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent mb-2"></div>
+      <p id="loading-text" class="text-sm font-medium text-slate-700">正在分析 APK 结构...</p>
+    </div>
+
+    <!-- Tab 1 内容：体检详情 -->
+    <div id="inspect-panel" class="hidden mt-8 space-y-6">
+      <!-- 状态横幅 -->
+      <div id="status-banner" class="p-6 rounded-2xl border shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+          <div id="status-icon" class="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-2xl font-bold shadow-sm"></div>
+          <div>
+            <h2 id="status-title" class="text-xl font-bold"></h2>
+            <p id="status-desc" class="text-xs opacity-90 mt-1"></p>
+          </div>
+        </div>
+        <button onclick="copyMarkdownReport()" class="px-4 py-2 bg-white rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-sm whitespace-nowrap">
+          📋 复制 Markdown 报告
+        </button>
+      </div>
+
+      <!-- 4 个统计卡片 -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <span class="text-xs text-slate-500 font-medium">动态库 (SO) 总数</span>
+          <p id="stat-total-so" class="text-2xl font-bold text-slate-800 mt-1">0</p>
+          <span id="stat-abi-list" class="text-xs text-slate-400"></span>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <span class="text-xs text-slate-500 font-medium">64位合规库 / 不合规</span>
+          <p class="text-2xl font-bold text-slate-800 mt-1">
+            <span id="stat-aligned-so" class="text-emerald-600">0</span>
+            <span class="text-slate-400 text-lg"> / </span>
+            <span id="stat-unaligned-so" class="text-rose-600">0</span>
+          </p>
+          <span class="text-xs text-slate-400">arm64-v8a & x86_64</span>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-500 font-medium">签名方案</span>
+            <span class="text-[10px] text-slate-400">v1 ~ v3.2</span>
+          </div>
+          <p id="stat-signature" class="text-base font-bold text-slate-800 mt-2 truncate">-</p>
+          <span id="stat-signing-block" class="text-xs text-slate-400"></span>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <span class="text-xs text-slate-500 font-medium">加固与渠道</span>
+          <p id="stat-hardening" class="text-base font-bold text-slate-800 mt-2 truncate">-</p>
+          <span id="stat-walle" class="text-xs text-blue-600 font-medium"></span>
+        </div>
+      </div>
+
+      <!-- 加固特征提示框 -->
+      <div id="hardening-alert" class="hidden p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+        <div class="font-bold text-sm mb-1">⚠️ 检测到应用已进行加固保护：</div>
+        <div id="hardening-list" class="space-y-1"></div>
+        <div class="mt-2 text-amber-800">
+          <strong>防坑提示</strong>：如果发现下方的 SO 出现 <code>ZIP 偏移未对齐</code>，说明加固工具重新打包或重签名时遗漏了 <code>zipalign -P 16</code> 参数！
+        </div>
+      </div>
+
+      <!-- SO 列表 -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <h3 class="font-bold text-slate-800 text-sm">动态链接库 (.so) 对齐穿透明细</h3>
+          <span id="table-so-count" class="text-xs text-slate-500"></span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-500 border-b border-slate-200 font-semibold">
+              <tr>
+                <th class="px-6 py-3">架构 (ABI)</th>
+                <th class="px-6 py-3">库名称</th>
+                <th class="px-6 py-3">ELF 段对齐 (p_align)</th>
+                <th class="px-6 py-3">ZIP 数据偏移 (Offset)</th>
+                <th class="px-6 py-3">对齐结论</th>
+                <th class="px-6 py-3">说明与修复指引</th>
+              </tr>
+            </thead>
+            <tbody id="so-table-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 2 内容：美团 Walle 多渠道工坊 -->
+    <div id="walle-panel" class="hidden mt-8 space-y-6">
+      <div id="walle-empty-hint" class="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-500 text-sm shadow-sm">
+        请先在上方拖入或选择需要打多渠道包的<strong>已签名母包</strong>。
+      </div>
+
+      <div id="walle-action-area" class="hidden bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+        <div>
+          <h2 class="text-lg font-bold text-slate-800">美团 Walle 多渠道秒级打包工坊</h2>
+          <p class="text-xs text-slate-500 mt-1">
+            原理：直接在 APK Signing Block 中插入自定义渠道块，完全兼容 v2/v3/v3.1/v3.2 签名，不改变原有 16KB 对齐。
+          </p>
+        </div>
+
+        <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+          <div class="flex items-center justify-between">
+            <span id="walle-base-filename" class="font-semibold text-slate-700"></span>
+            <span id="walle-base-filesize" class="font-mono text-slate-500"></span>
+          </div>
+          <div class="flex items-center gap-4 text-slate-600">
+            <span id="walle-v2-status"></span>
+            <span id="walle-v3-status"></span>
+            <span id="walle-16kb-status"></span>
+          </div>
+          <p class="text-[11px] text-slate-400">
+            💡 说明：Walle 依赖 APK Signing Block (v2/v3/v3.1/v3.2) 进行免密无损切包。v4 签名是用于 ADB 增量调试的外置 .idsig 伴随文件，应用市场与常规分发安装无需此文件。
+          </p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-2">输入目标渠道列表 (每行一个):</label>
+          <textarea id="walle-channels-input" rows="5" class="w-full text-xs font-mono p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none">googleplay
+huawei
+xiaomi
+oppo
+vivo</textarea>
+          <div class="flex gap-2 mt-2">
+            <button onclick="setChannels('googleplay\nhuawei\nxiaomi\noppo\nvivo\nhonor\ntencent')" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded text-[11px] text-slate-600 font-medium transition">主流应用商店模板</button>
+            <button onclick="setChannels('official\nofficial_beta\nweb')" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded text-[11px] text-slate-600 font-medium transition">官方站内模板</button>
+          </div>
+        </div>
+
+        <button id="btn-generate-channels" onclick="generateChannels()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl shadow-md shadow-blue-200 transition">
+          ⚡ 开始生成多渠道包 (本地瞬时完成)
+        </button>
+
+        <!-- 生成结果 -->
+        <div id="walle-results" class="hidden pt-4 border-t border-slate-200">
+          <h3 class="text-xs font-bold text-slate-700 mb-3">生成结果列表：</h3>
+          <div id="walle-results-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // 全局状态
+    let currentFile = null;
+    let currentReport = null;
+    let activeTab = 'inspect';
+
+    const APK_SIG_BLOCK_MAGIC = new Uint8Array([0x41, 0x50, 0x4b, 0x20, 0x53, 0x69, 0x67, 0x20, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x20, 0x34, 0x32]);
+    const ID_APK_SIGNATURE_SCHEME_V2 = 0x7109871a;
+    const ID_APK_SIGNATURE_SCHEME_V3 = 0xf346146d;
+    const ID_APK_SIGNATURE_SCHEME_V31 = 0x1b93ad61;
+    const ID_APK_SIGNATURE_SCHEME_V32 = 0x70e1c89f; // Android 17+ PQC Hybrid
+    const ID_WALLE_CHANNEL = 0x71777777;
+
+    const HARDENING_RULES = [
+      { name: '腾讯乐固 / 御安全', desc: '包含 libshex/libshell/libtx_x', test: f => /lib\/.*\/lib(shex|shell|tx_x).*\.so$/.test(f) },
+      { name: '梆梆安全', desc: '包含 libSecShell/libsecexe', test: f => /lib\/.*\/libSec(Shell|exe).*\.so$/.test(f) },
+      { name: '爱加密', desc: '包含 libexec/ijiami.dat', test: f => /lib\/.*\/libexec.*\.so$/.test(f) || /ijiami\.dat$/.test(f) },
+      { name: '网易易盾', desc: '包含 libnesec', test: f => /lib\/.*\/libnesec.*\.so$/.test(f) },
+      { name: '360加固保', desc: '包含 libjiagu/libprotectClass', test: f => /lib\/.*\/lib(jiagu|protectClass).*\.so$/.test(f) },
+      { name: '娜迦 (NAGA)', desc: '包含 libchaosvmp/libddog', test: f => /lib\/.*\/lib(chaosvmp|ddog).*\.so$/.test(f) },
+      { name: '百度加固', desc: '包含 libbaiduprotect', test: f => /lib\/.*\/libbaiduprotect.*\.so$/.test(f) },
+      { name: '阿里聚安全', desc: '包含 libsgmain/libmobisec', test: f => /lib\/.*\/lib(sgmain|mobisec).*\.so$/.test(f) }
+    ];
+
+    // Tab 切换
+    function switchTab(tab) {
+      activeTab = tab;
+      const inspectBtn = document.getElementById('tab-inspect-btn');
+      const walleBtn = document.getElementById('tab-walle-btn');
+      const inspectPanel = document.getElementById('inspect-panel');
+      const wallePanel = document.getElementById('walle-panel');
+
+      if (tab === 'inspect') {
+        inspectBtn.className = "flex-1 py-2.5 text-sm font-semibold rounded-lg bg-blue-600 text-white shadow-sm transition-all";
+        walleBtn.className = "flex-1 py-2.5 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900 transition-all";
+        if (currentReport) inspectPanel.classList.remove('hidden');
+        wallePanel.classList.add('hidden');
+      } else {
+        walleBtn.className = "flex-1 py-2.5 text-sm font-semibold rounded-lg bg-blue-600 text-white shadow-sm transition-all";
+        inspectBtn.className = "flex-1 py-2.5 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900 transition-all";
+        inspectPanel.classList.add('hidden');
+        wallePanel.classList.remove('hidden');
+        updateWallePanel();
+      }
+    }
+
+    function setChannels(text) {
+      document.getElementById('walle-channels-input').value = text;
+    }
+
+    // 拖拽事件监听
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('border-blue-500', 'bg-blue-50/50');
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('border-blue-500', 'bg-blue-50/50');
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('border-blue-500', 'bg-blue-50/50');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleFile(e.dataTransfer.files[0]);
+      }
+    });
+
+    // 核心流式解析逻辑
+    async function handleFile(file) {
+      if (!file.name.endsWith('.apk') && !file.name.endsWith('.aab')) {
+        alert('请选择 .apk 或 .aab 文件');
+        return;
+      }
+
+      currentFile = file;
+      document.getElementById('file-hint').innerText = `已选择: ${file.name}`;
+      document.getElementById('loading-spinner').classList.remove('hidden');
+
+      try {
+        currentReport = await inspectApk(file);
+        renderReport(currentReport);
+        updateWallePanel();
+      } catch (err) {
+        alert(`解析出错: ${err.message}`);
+      } finally {
+        document.getElementById('loading-spinner').classList.add('hidden');
+      }
+    }
+
+    async function inspectApk(file) {
+      const fileSize = file.size;
+      const readLen = Math.min(fileSize, 65557);
+      const eocdBuf = await file.slice(fileSize - readLen, fileSize).arrayBuffer();
+      const eocdView = new DataView(eocdBuf);
+
+      let cdOffset = -1, cdSize = -1, eocdOffset = -1;
+      for (let i = eocdBuf.byteLength - 22; i >= 0; i--) {
+        if (eocdView.getUint32(i, true) === 0x06054b50) {
+          cdSize = eocdView.getUint32(i + 12, true);
+          cdOffset = eocdView.getUint32(i + 16, true);
+          eocdOffset = (fileSize - readLen) + i;
+          break;
+        }
+      }
+
+      if (cdOffset === -1) throw new Error('未能识别合法的 ZIP EOCD 记录');
+
+      // 读取 Central Directory
+      const cdBuf = await file.slice(cdOffset, cdOffset + cdSize).arrayBuffer();
+      const cdView = new DataView(cdBuf);
+      const decoder = new TextDecoder('utf-8');
+      const entries = [];
+      let offset = 0;
+
+      while (offset < cdBuf.byteLength) {
+        if (cdView.getUint32(offset, true) !== 0x02014b50) break;
+        const compressionMethod = cdView.getUint16(offset + 10, true);
+        const fileNameLength = cdView.getUint16(offset + 28, true);
+        const extraFieldLength = cdView.getUint16(offset + 30, true);
+        const commentLength = cdView.getUint16(offset + 32, true);
+        const localHeaderOffset = cdView.getUint32(offset + 42, true);
+
+        const nameBytes = new Uint8Array(cdBuf, offset + 46, fileNameLength);
+        const filename = decoder.decode(nameBytes);
+
+        entries.push({ filename, compressionMethod, localHeaderOffset });
+        offset += 46 + fileNameLength + extraFieldLength + commentLength;
+      }
+
+      // 签名块解析
+      const sigInfo = await parseSigningBlock(file, cdOffset);
+
+      // 检测 v1 (JAR) 签名
+      sigInfo.hasV1 = entries.some(e => {
+        const fn = e.filename.toUpperCase();
+        return fn.startsWith('META-INF/') && (fn.endsWith('.SF') || fn.endsWith('.RSA') || fn.endsWith('.DSA') || fn.endsWith('.EC') || fn === 'META-INF/MANIFEST.MF');
+      });
+
+      // 加固排查
+      const filenames = entries.map(e => e.filename);
+      const hardeningList = [];
+      for (const rule of HARDENING_RULES) {
+        const matches = filenames.filter(f => rule.test(f));
+        if (matches.length > 0) hardeningList.push({ name: rule.name, desc: rule.desc, count: matches.length });
+      }
+
+      // 筛选 SO 库
+      const soEntries = entries.filter(e => e.filename.startsWith('lib/') && e.filename.endsWith('.so'));
+      const soResults = [];
+      let aligned64Count = 0;
+      let unaligned64Count = 0;
+
+      for (const entry of soEntries) {
+        const parts = entry.filename.split('/');
+        const abi = parts.length >= 3 ? parts[1] : 'unknown';
+        const name = parts[parts.length - 1];
+        const is64Bit = (abi === 'arm64-v8a' || abi === 'x86_64');
+
+        // 读取 Local File Header 计算 dataOffset
+        const lfhBuf = await file.slice(entry.localHeaderOffset, entry.localHeaderOffset + 30).arrayBuffer();
+        const lfhView = new DataView(lfhBuf);
+        const fnLen = lfhView.getUint16(26, true);
+        const extraLen = lfhView.getUint16(28, true);
+        const dataOffset = entry.localHeaderOffset + 30 + fnLen + extraLen;
+        const isZip16K = (dataOffset % 16384 === 0);
+
+        let elfResult = null;
+        let status = 'PASS';
+        let statusReason = 'ELF与Zip偏移均满足 16KB 对齐要求';
+
+        if (entry.compressionMethod === 0) {
+          const headerBuf = await file.slice(dataOffset, Math.min(dataOffset + 8192, fileSize)).arrayBuffer();
+          elfResult = parseElf(headerBuf);
+
+          if (!elfResult.is16KbCompatible && !isZip16K) {
+            status = 'FAIL_BOTH';
+            statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节，且 Zip 偏移未按 16KB 对齐`;
+            if (is64Bit) unaligned64Count++;
+          } else if (!elfResult.is16KbCompatible) {
+            status = 'FAIL_ELF';
+            statusReason = `ELF段对齐仅 ${elfResult.minAlign} 字节 (需 16384+)，C/C++编译链接未开启 16KB`;
+            if (is64Bit) unaligned64Count++;
+          } else if (!isZip16K) {
+            status = 'FAIL_ZIP';
+            statusReason = `ELF已满足16KB，但 Zip 偏移 (offset=${dataOffset}) 未对齐 16KB (加固/重签名未做 zipalign -P 16)`;
+            if (is64Bit) unaligned64Count++;
+          } else {
+            if (is64Bit) aligned64Count++;
+          }
+        } else {
+          status = 'COMPRESSED';
+          statusReason = 'SO 库被压缩存储（非 Stored），建议 extractNativeLibs=false';
+        }
+
+        if (!is64Bit && status === 'PASS') {
+          status = '32BIT_WARN';
+          statusReason = '32 位架构库（Android 16KB 内核不强制要求）';
+        }
+
+        soResults.push({ abi, name, dataOffset, isZip16K, elfResult, status, statusReason });
+      }
+
+      return {
+        fileName: file.name,
+        fileSize: file.size,
+        cdOffset,
+        eocdOffset,
+        sigInfo,
+        hardeningList,
+        soResults,
+        aligned64Count,
+        unaligned64Count,
+        is16KbCompatible: unaligned64Count === 0
+      };
+    }
+
+    function parseElf(buf) {
+      if (buf.byteLength < 52) return { is16KbCompatible: false, minAlign: 0 };
+      const view = new DataView(buf);
+      if (view.getUint32(0, false) !== 0x7f454c46) return { is16KbCompatible: false, minAlign: 0 };
+
+      const is64Bit = view.getUint8(4) === 2;
+      const isLittleEndian = view.getUint8(5) === 1;
+
+      let phOffset = is64Bit ? Number(view.getBigUint64(32, isLittleEndian)) : view.getUint32(28, isLittleEndian);
+      let phEntrySize = view.getUint16(is64Bit ? 54 : 42, isLittleEndian);
+      let phNum = view.getUint16(is64Bit ? 56 : 44, isLittleEndian);
+
+      let minAlign = Infinity;
+      let hasLoad = false;
+
+      for (let i = 0; i < phNum; i++) {
+        const entryOffset = phOffset + i * phEntrySize;
+        if (entryOffset + phEntrySize > buf.byteLength) break;
+        const p_type = view.getUint32(entryOffset, isLittleEndian);
+        if (p_type === 1) { // PT_LOAD
+          hasLoad = true;
+          const align = is64Bit ? Number(view.getBigUint64(entryOffset + 48, isLittleEndian)) : view.getUint32(entryOffset + 28, isLittleEndian);
+          if (align > 0) minAlign = Math.min(minAlign, align);
+        }
+      }
+
+      if (!hasLoad || minAlign === Infinity) return { is16KbCompatible: false, minAlign: 0 };
+      return { is16KbCompatible: minAlign >= 16384, minAlign };
+    }
+
+    async function parseSigningBlock(file, cdOffset) {
+      if (cdOffset < 24) return { hasBlock: false };
+      const footBuf = await file.slice(cdOffset - 24, cdOffset).arrayBuffer();
+      const footView = new DataView(footBuf);
+      const magic = new Uint8Array(footBuf, 8, 16);
+
+      for (let i = 0; i < 16; i++) {
+        if (magic[i] !== APK_SIG_BLOCK_MAGIC[i]) return { hasBlock: false };
+      }
+
+      const blockSize = Number(footView.getBigUint64(0, true));
+      const totalSize = blockSize + 8;
+      const startOffset = cdOffset - totalSize;
+      const blockBuf = await file.slice(startOffset, cdOffset).arrayBuffer();
+      const blockView = new DataView(blockBuf);
+
+      let hasV2 = false, hasV3 = false, hasV31 = false, hasV32 = false, hasWalle = false, channelName = '';
+      let offset = 8;
+      const end = blockBuf.byteLength - 24;
+
+      while (offset < end) {
+        const pairLen = Number(blockView.getBigUint64(offset, true));
+        offset += 8;
+        if (pairLen < 4 || offset + pairLen > end + 24) break;
+        const id = blockView.getUint32(offset, true);
+        if (id === ID_APK_SIGNATURE_SCHEME_V2) hasV2 = true;
+        if (id === ID_APK_SIGNATURE_SCHEME_V3) hasV3 = true;
+        if (id === ID_APK_SIGNATURE_SCHEME_V31) hasV31 = true;
+        if (id === ID_APK_SIGNATURE_SCHEME_V32) hasV32 = true;
+        if (id === ID_WALLE_CHANNEL) {
+          hasWalle = true;
+          const valBytes = new Uint8Array(blockBuf, offset + 4, pairLen - 4);
+          const rawText = new TextDecoder().decode(valBytes);
+          if (valBytes.length > 2) {
+            const strLen = new DataView(valBytes.buffer, valBytes.byteOffset, 2).getUint16(0, true);
+            if (strLen > 0 && strLen <= valBytes.length - 2) {
+              channelName = new TextDecoder().decode(valBytes.subarray(2, 2 + strLen));
+            } else {
+              channelName = rawText;
+            }
+          } else {
+            channelName = rawText;
+          }
+        }
+        offset += pairLen;
+      }
+
+      return { hasBlock: true, hasV2, hasV3, hasV31, hasV32, hasWalle, channelName };
+    }
+
+    // 渲染体检报告
+    function renderReport(rep) {
+      document.getElementById('inspect-panel').classList.remove('hidden');
+
+      const banner = document.getElementById('status-banner');
+      const icon = document.getElementById('status-icon');
+      const title = document.getElementById('status-title');
+      const desc = document.getElementById('status-desc');
+
+      if (rep.is16KbCompatible) {
+        banner.className = "p-6 rounded-2xl border shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-emerald-50/80 border-emerald-200 text-emerald-900";
+        icon.className = "w-14 h-14 rounded-2xl flex items-center justify-center text-white text-2xl font-bold shadow-sm bg-emerald-600";
+        icon.innerText = "✓";
+        title.innerText = "体检合格：100% 满足 16 KB Page Size 要求";
+        desc.innerText = "所有 64 位 SO 库的 ELF 内部段对齐与 ZIP 偏移对齐均达到 16384+ 字节。";
+      } else {
+        banner.className = "p-6 rounded-2xl border shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-rose-50/80 border-rose-200 text-rose-900";
+        icon.className = "w-14 h-14 rounded-2xl flex items-center justify-center text-white text-2xl font-bold shadow-sm bg-rose-600";
+        icon.innerText = "✕";
+        title.innerText = "体检不合格：发现未按 16 KB 对齐的动态库！";
+        desc.innerText = `检测到 ${rep.unaligned64Count} 个 64 位库未对齐，在 Android 15+ (16KB) 设备上安装或运行将发生崩溃！`;
+      }
+
+      document.getElementById('stat-total-so').innerText = rep.soResults.length;
+      document.getElementById('stat-aligned-so').innerText = rep.aligned64Count;
+      document.getElementById('stat-unaligned-so').innerText = rep.unaligned64Count;
+
+      const sigs = [];
+      if (rep.sigInfo.hasV1) sigs.push('v1 (JAR)');
+      if (rep.sigInfo.hasV2) sigs.push('v2');
+      if (rep.sigInfo.hasV3) sigs.push('v3');
+      if (rep.sigInfo.hasV31) sigs.push('v3.1');
+      if (rep.sigInfo.hasV32) sigs.push('v3.2 (PQC)');
+      document.getElementById('stat-signature').innerText = sigs.join(' + ') || '未检测到有效签名';
+      document.getElementById('stat-signing-block').innerText = rep.sigInfo.hasBlock ? '包含签名块 (v4为外置文件)' : '无签名块';
+
+      if (rep.hardeningList.length > 0) {
+        document.getElementById('stat-hardening').innerText = rep.hardeningList[0].name;
+        document.getElementById('hardening-alert').classList.remove('hidden');
+        document.getElementById('hardening-list').innerHTML = rep.hardeningList.map(h => `<div>• <strong>${h.name}</strong>: ${h.desc}（匹配到 ${h.count} 个特征文件）</div>`).join('');
+      } else {
+        document.getElementById('stat-hardening').innerText = '未加固 / 纯净包';
+        document.getElementById('hardening-alert').classList.add('hidden');
+      }
+
+      document.getElementById('stat-walle').innerText = rep.sigInfo.hasWalle ? `Walle: ${rep.sigInfo.channelName}` : '无 Walle 渠道';
+      document.getElementById('table-so-count').innerText = `共 ${rep.soResults.length} 个 SO 库`;
+
+      // 填充表格
+      const tbody = document.getElementById('so-table-body');
+      tbody.innerHTML = '';
+      for (const so of rep.soResults) {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-50/60";
+
+        let badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">PASS</span>';
+        if (so.status === 'FAIL_ELF') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800">ELF 未对齐</span>';
+        if (so.status === 'FAIL_ZIP') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">ZIP 偏移未对齐</span>';
+        if (so.status === 'FAIL_BOTH') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-200 text-rose-900">双重未对齐</span>';
+        if (so.status === '32BIT_WARN') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">32位(不强制)</span>';
+        if (so.status === 'COMPRESSED') badge = '<span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 text-sky-800">压缩存储</span>';
+
+        const elfAlignText = so.elfResult ? `${so.elfResult.minAlign} B` : '-';
+        const zipAlignText = `${so.dataOffset} ${so.isZip16K ? '(16KB已对齐)' : '(未对齐)'}`;
+
+        tr.innerHTML = `
+          <td class="px-6 py-3.5"><span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[11px]">${so.abi}</span></td>
+          <td class="px-6 py-3.5 font-mono text-slate-800">${so.name}</td>
+          <td class="px-6 py-3.5 font-mono font-semibold ${so.elfResult?.is16KbCompatible ? 'text-emerald-600' : 'text-rose-600'}">${elfAlignText}</td>
+          <td class="px-6 py-3.5 font-mono ${so.isZip16K ? 'text-emerald-600' : 'text-rose-600'}">${zipAlignText}</td>
+          <td class="px-6 py-3.5">${badge}</td>
+          <td class="px-6 py-3.5 text-slate-500 max-w-xs">${so.statusReason}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function updateWallePanel() {
+      if (!currentFile || !currentReport) {
+        document.getElementById('walle-empty-hint').classList.remove('hidden');
+        document.getElementById('walle-action-area').classList.add('hidden');
+        return;
+      }
+      document.getElementById('walle-empty-hint').classList.add('hidden');
+      document.getElementById('walle-action-area').classList.remove('hidden');
+
+      document.getElementById('walle-base-filename').innerText = `母包文件: ${currentFile.name}`;
+      document.getElementById('walle-base-filesize').innerText = `${(currentFile.size / (1024 * 1024)).toFixed(2)} MB`;
+      document.getElementById('walle-v2-status').innerText = `v2 签名: ${currentReport.sigInfo.hasV2 ? '✅' : '❌'}`;
+      const hasV3Plus = currentReport.sigInfo.hasV3 || currentReport.sigInfo.hasV31 || currentReport.sigInfo.hasV32;
+      document.getElementById('walle-v3-status').innerText = `v3/v3.1/v3.2: ${hasV3Plus ? '✅' : '❌'}`;
+      document.getElementById('walle-16kb-status').innerText = `16KB 状态: ${currentReport.is16KbCompatible ? '✅ 合规' : '⚠️ 存在未对齐'}`;
+    }
+
+    // 生成渠道包逻辑（纯内存无损拼接）
+    async function generateChannels() {
+      if (!currentFile || !currentReport) return;
+      const hasModernScheme = currentReport.sigInfo.hasV2 || currentReport.sigInfo.hasV3 || currentReport.sigInfo.hasV31 || currentReport.sigInfo.hasV32;
+      if (!hasModernScheme) {
+        if (currentReport.sigInfo.hasV1) {
+          alert('无法生成：母包仅包含 v1 (JAR) 签名，缺失 APK 签名块 (v2/v3/v3.1/v3.2)。美团 Walle 方案基于 APK Signing Block，请先使用 apksigner 对母包开启 v2 或 v3 签名后再试。');
+        } else {
+          alert('无法生成：母包缺少 v2 / v3 / v3.1 / v3.2 签名块。美团 Walle 方案依赖 APK 签名块，请先对加固后的 APK 完成重签名。');
+        }
+        return;
+      }
+
+      const input = document.getElementById('walle-channels-input').value;
+      const channels = input.split('\n').map(c => c.trim()).filter(c => c.length > 0);
+      if (channels.length === 0) {
+        alert('请输入至少一个渠道名称');
+        return;
+      }
+
+      const btn = document.getElementById('btn-generate-channels');
+      btn.innerText = '正在本地内存快速生成渠道包...';
+      btn.disabled = true;
+
+      try {
+        const resultsGrid = document.getElementById('walle-results-grid');
+        resultsGrid.innerHTML = '';
+        const baseName = currentFile.name.replace(/\.apk$/i, '');
+
+        for (const ch of channels) {
+          const blob = await writeWalleChannel(currentFile, currentReport.cdOffset, currentReport.eocdOffset, ch);
+          const outName = `${baseName}_${ch}.apk`;
+
+          const card = document.createElement('div');
+          card.className = "flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-white transition";
+          card.innerHTML = `
+            <div>
+              <span class="text-xs font-bold text-slate-800">${ch}</span>
+              <p class="text-[11px] text-slate-500 font-mono truncate max-w-[200px]">${outName}</p>
+            </div>
+            <button class="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-semibold transition">⬇️ 下载 APK</button>
+          `;
+          card.querySelector('button').addEventListener('click', () => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = outName;
+            a.click();
+            URL.revokeObjectURL(url);
+          });
+          resultsGrid.appendChild(card);
+        }
+
+        document.getElementById('walle-results').classList.remove('hidden');
+      } catch (err) {
+        alert(`生成失败: ${err.message}`);
+      } finally {
+        btn.innerText = '⚡ 开始生成多渠道包 (本地瞬时完成)';
+        btn.disabled = false;
+      }
+    }
+
+    async function writeWalleChannel(file, cdOffset, eocdOffset, channel) {
+      const footBuf = await file.slice(cdOffset - 24, cdOffset).arrayBuffer();
+      const blockSizeOld = Number(new DataView(footBuf).getBigUint64(0, true));
+      const totalOldBlockSize = blockSizeOld + 8;
+      const blockStart = cdOffset - totalOldBlockSize;
+
+      const oldBlockBuf = await file.slice(blockStart, cdOffset).arrayBuffer();
+      const oldView = new DataView(oldBlockBuf);
+
+      const retainedPairs = [];
+      let offset = 8;
+      const pairsEnd = oldBlockBuf.byteLength - 24;
+
+      while (offset < pairsEnd) {
+        const pairLen = Number(oldView.getBigUint64(offset, true));
+        offset += 8;
+        if (pairLen < 4 || offset + pairLen > pairsEnd + 24) break;
+        const id = oldView.getUint32(offset, true);
+        const data = new Uint8Array(oldBlockBuf, offset + 4, pairLen - 4);
+        if (id !== ID_WALLE_CHANNEL) retainedPairs.push({ id, data });
+        offset += pairLen;
+      }
+
+      // 编码新的 Walle 渠道：2 字节小端长度 + channel 字节
+      const chBytes = new TextEncoder().encode(channel);
+      const walleVal = new Uint8Array(2 + chBytes.length);
+      new DataView(walleVal.buffer).setUint16(0, chBytes.length, true);
+      walleVal.set(chBytes, 2);
+      retainedPairs.push({ id: ID_WALLE_CHANNEL, data: walleVal });
+
+      let newPairsLen = 0;
+      for (const p of retainedPairs) newPairsLen += 8 + 4 + p.data.length;
+      const newTotalSize = 8 + newPairsLen + 24;
+      const newBlockSizeEx = newTotalSize - 8;
+
+      const newBuf = new ArrayBuffer(newTotalSize);
+      const newView = new DataView(newBuf);
+      const newU8 = new Uint8Array(newBuf);
+
+      newView.setBigUint64(0, BigInt(newBlockSizeEx), true);
+      let wOffset = 8;
+      for (const p of retainedPairs) {
+        newView.setBigUint64(wOffset, BigInt(4 + p.data.length), true);
+        wOffset += 8;
+        newView.setUint32(wOffset, p.id, true);
+        wOffset += 4;
+        newU8.set(p.data, wOffset);
+        wOffset += p.data.length;
+      }
+      newView.setBigUint64(wOffset, BigInt(newBlockSizeEx), true);
+      wOffset += 8;
+      newU8.set(APK_SIG_BLOCK_MAGIC, wOffset);
+
+      // 调整 EOCD 的 cdOffset
+      const delta = newTotalSize - totalOldBlockSize;
+      const oldEocdBuf = await file.slice(eocdOffset, file.size).arrayBuffer();
+      const newEocdBuf = oldEocdBuf.slice(0);
+      const newEocdView = new DataView(newEocdBuf);
+      const oldCdInEocd = newEocdView.getUint32(16, true);
+      newEocdView.setUint32(16, oldCdInEocd + delta, true);
+
+      // 拼接返回 Blob
+      const p1 = file.slice(0, blockStart);
+      const p2 = new Blob([newBuf]);
+      const p3 = file.slice(cdOffset, eocdOffset);
+      const p4 = new Blob([newEocdBuf]);
+
+      return new Blob([p1, p2, p3, p4], { type: 'application/vnd.android.package-archive' });
+    }
+
+    function copyMarkdownReport() {
+      if (!currentReport) return;
+      const sigs = [];
+      if (currentReport.sigInfo.hasV1) sigs.push('v1 (JAR)');
+      if (currentReport.sigInfo.hasV2) sigs.push('v2');
+      if (currentReport.sigInfo.hasV3) sigs.push('v3');
+      if (currentReport.sigInfo.hasV31) sigs.push('v3.1');
+      if (currentReport.sigInfo.hasV32) sigs.push('v3.2 (PQC)');
+      const lines = [
+        `# Android 16KB & 渠道合规体检报告`,
+        `- **文件名**: ${currentReport.fileName}`,
+        `- **文件大小**: ${(currentReport.fileSize / (1024 * 1024)).toFixed(2)} MB`,
+        `- **综合体检结论**: ${currentReport.is16KbCompatible ? '✅ 合规通过 (PASS)' : '❌ 不合规 (FAIL)'}`,
+        `- **16KB 兼容状态**: ${currentReport.is16KbCompatible ? '兼容' : '不兼容'}`,
+        `- **64位 SO 对齐率**: ${currentReport.aligned64Count} / ${currentReport.aligned64Count + currentReport.unaligned64Count}`,
+        `- **签名版本**: ${sigs.join(', ') || '未检测到有效签名'}`,
+        `- **已有渠道**: ${currentReport.sigInfo.channelName || '无'}`,
+        `- **加固特征**: ${currentReport.hardeningList.length > 0 ? currentReport.hardeningList.map(h => h.name).join(', ') : '未加固 / 纯净包'}`,
+        ``,
+        `## 详细 64 位 SO 列表`,
+        `| 架构 | 动态库 | ELF 对齐 | Zip 偏移对齐 | 结论 |`,
+        `| :--- | :--- | :--- | :--- | :--- |`
+      ];
+      for (const so of currentReport.soResults) {
+        lines.push(`| ${so.abi} | ${so.name} | ${so.elfResult ? so.elfResult.minAlign + ' B' : '-'} | ${so.dataOffset + ' ' + (so.isZip16K ? '✅' : '❌')} | ${so.status} |`);
+      }
+      navigator.clipboard.writeText(lines.join('\n'));
+      alert('Markdown 报告已复制到剪贴板！');
+    }
+  </script>
+</body>
+</html>
