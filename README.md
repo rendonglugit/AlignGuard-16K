@@ -104,8 +104,8 @@ AlignGuard 16K is a static, zero-build web application:
    git push -u origin main
    ```
 3. Go to **Settings** -> **Pages** in your repository:
-   - Under **Build and deployment** -> **Source**, select `Deploy from a branch`.
-   - Choose branch `main` and folder `/ (root)`, then click **Save**.
+   - Under **Build and deployment** -> **Source**, select **`GitHub Actions`** (the project includes a pre-configured `.github/workflows/deploy.yml` workflow that automatically deploys on every push to `main`).
+   - *(Note: You can also choose `Deploy from a branch` with `main` branch and `/ (root)` folder if preferred)*.
 4. Within seconds, your team's private inspection tool is live at `https://rendonglugit.github.io/AlignGuard-16K/`!
 
 ### Option B: Double-Click Local Execution (Offline Ready)

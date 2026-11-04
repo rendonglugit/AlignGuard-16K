@@ -102,9 +102,9 @@ AlignGuard 16K 是纯静态架构，开箱即用，无需配置复杂的构建�
    git push -u origin main
    ```
 3. 在 GitHub 仓库页点击 **Settings** -> **Pages**：
-   - **Source** 选择 `Deploy from a branch`。
-   - 分支选择 `main`，目录选择 `/ (root)`，点击 **Save**。
-4. 稍等十几秒，即可通过 `https://rendonglugit.github.io/AlignGuard-16K/` 访问团队专属工具站！
+   - **Source** 选择 **`GitHub Actions`**（项目已内置开箱即用的 `.github/workflows/deploy.yml` 自动化流水线，推送到 `main` 分支即可自动发布上线）。
+   - *(注：若偏好传统方式，亦可选择 `Deploy from a branch`，分支选择 `main`，目录选择 `/ (root)` 点击保存)*。
+4. 部署完成后，即可通过 `https://rendonglugit.github.io/AlignGuard-16K/` 访问团队专属工具站！
 
 ### 选项 B：本地双击即用（无需联网）
 直接用浏览器双击打开项目根目录下的 [`index.html`](./index.html)，即可在任意离线 Mac/Windows/Linux 设备上运行！
